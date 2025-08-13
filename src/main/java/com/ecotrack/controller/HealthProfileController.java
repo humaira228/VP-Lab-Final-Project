@@ -4,7 +4,6 @@ import com.ecotrack.model.HealthProfile;
 import com.ecotrack.model.User;
 import com.ecotrack.repository.HealthProfileRepository;
 import com.ecotrack.repository.UserRepository;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
@@ -12,17 +11,19 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/profile")
 public class HealthProfileController {
 
-    @Autowired
-    private HealthProfileRepository healthProfileRepository;
+    private final HealthProfileRepository healthProfileRepository;
+    private final UserRepository userRepository;
 
-    @Autowired
-    private UserRepository userRepository;
+    public HealthProfileController(HealthProfileRepository healthProfileRepository,
+                                   UserRepository userRepository) {
+        this.healthProfileRepository = healthProfileRepository;
+        this.userRepository = userRepository;
+    }
 
     @PostMapping
     public HealthProfile saveProfile(@RequestBody HealthProfile profile, Authentication authentication) {
         String email = authentication.getName();
         User user = userRepository.findByEmail(email).orElseThrow();
-
         profile.setUserEmail(user.getEmail());
         return healthProfileRepository.save(profile);
     }

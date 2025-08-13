@@ -1,54 +1,44 @@
 package com.ecotrack.controller;
 
-import com.ecotrack.dto.*;
-import com.ecotrack.model.HealthProfile;
-import com.ecotrack.repository.HealthProfileRepository;
-import com.ecotrack.service.AqiService;
-import org.springframework.beans.factory.annotation.Autowired;
+import com.ecotrack.dto.RouteOption;
+import com.ecotrack.dto.RouteResponse;
+import com.ecotrack.service.RouteService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.*;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 @RestController
-@RequestMapping("/api/routes")
+@RequestMapping("/api/route")
 public class RouteController {
+    private static final Logger logger = LoggerFactory.getLogger(RouteController.class);
+    private final RouteService routeService;
 
-    @Autowired
-    private HealthProfileRepository profileRepo;
-
-    @Autowired
-    private AqiService aqiService;
-
-    @PostMapping
-    public RouteResponse recommendRoutes(@RequestBody RouteRequest request) {
-        HealthProfile profile = profileRepo.findByUserEmail(request.userEmail());
-        if (profile == null) {
-            throw new RuntimeException("Health profile not found for user: " + request.userEmail());
-        }
-
-        double factor = profile.getPollutionSensitivity();
-
-        // Average location for AQI
-        double centerLat = (request.originLat() + request.destLat()) / 2;
-        double centerLon = (request.originLon() + request.destLon()) / 2;
-
-        // Fetch AQI
-        int aqi = aqiService.getAqi(centerLat, centerLon);
-
-        //  Compute baseScore from AQI (lower AQI = better score)
-        double baseScore = 100 - Math.min(aqi, 100);
-
-        // Modifying base score using health profile factor
-        List<RouteOption> routes = List.of(
-                new RouteOption("routeA", score(baseScore, factor, 1.0), "abc123polyline", "green"),
-                new RouteOption("routeB", score(baseScore, factor, 0.7), "def456polyline", "yellow"),
-                new RouteOption("routeC", score(baseScore, factor, 0.4), "ghi789polyline", "red")
-        );
-
-        return new RouteResponse(routes);
+    public RouteController(RouteService routeService) {
+        this.routeService = routeService;
     }
 
-    private double score(double base, double factor, double modifier) {
-        return Math.min(100, Math.max(0, base * modifier / factor));
+    @GetMapping("/recommend")
+    public ResponseEntity<?> recommendRoutes(
+            @RequestParam double startLon,
+            @RequestParam double startLat,
+            @RequestParam double endLon,
+            @RequestParam double endLat
+    ) {
+        try {
+            logger.info("Fetching routes from {}:{} to {}:{}", startLat, startLon, endLat, endLon);
+            List<RouteOption> routes = routeService.getRouteAlternatives(startLon, startLat, endLon, endLat);
+            return ResponseEntity.ok(new RouteResponse(routes));
+        } catch (Exception e) {
+            logger.error("Error in recommendRoutes", e);
+            Map<String, Object> error = new HashMap<>();
+            error.put("success", false);
+            error.put("message", e.getMessage());
+            return ResponseEntity.status(500).body(error);
+        }
     }
 }

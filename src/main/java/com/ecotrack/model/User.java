@@ -3,7 +3,7 @@ package com.ecotrack.model;
 import jakarta.persistence.*;
 
 @Entity
-@Table(name = "users") //  FIX:
+@Table(name = "users")
 public class User {
 
     @Id
@@ -17,7 +17,6 @@ public class User {
 
     private String role = "USER";
 
-    // Getters & Setters
     public Long getId() { return id; }
     public String getEmail() { return email; }
     public void setEmail(String email) { this.email = email; }
