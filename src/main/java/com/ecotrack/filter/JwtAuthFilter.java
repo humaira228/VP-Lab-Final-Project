@@ -27,47 +27,55 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     private UserRepository userRepo;
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
-            throws ServletException, IOException {
-
-        String path = request.getServletPath();
-
-        // Skip JWT check for public endpoints
-        if (path.startsWith("/api/auth/")
-                || path.startsWith("/api/route/")
-                || path.equals("/api/hello")
-                || path.equals("/api/aqi")) {
-            filterChain.doFilter(request, response);
-            return;
-        }
+    protected void doFilterInternal(HttpServletRequest request,
+                                    HttpServletResponse response,
+                                    FilterChain filterChain) throws ServletException, IOException {
 
         String authHeader = request.getHeader("Authorization");
 
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             String token = authHeader.substring(7);
+
             try {
                 String email = jwtUtil.validateTokenAndGetEmail(token);
 
-                User user = userRepo.findByEmail(email).orElse(null);
-                if (user != null) {
-                    UserDetails userDetails = org.springframework.security.core.userdetails.User
-                            .withUsername(user.getEmail())
-                            .password(user.getPassword())
-                            .roles(user.getRole())
-                            .build();
+                // Load user from DB
+                User user = userRepo.findByEmail(email)
+                        .orElseThrow(() -> new RuntimeException("User not found: " + email));
 
-                    UsernamePasswordAuthenticationToken auth =
+                UserDetails userDetails = org.springframework.security.core.userdetails.User
+                        .withUsername(user.getEmail())
+                        .password(user.getPassword())
+                        .roles(user.getRole().name())
+                        .build();
+
+                // Set authentication
+                if (SecurityContextHolder.getContext().getAuthentication() == null) {
+                    UsernamePasswordAuthenticationToken authToken =
                             new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
-
-                    auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                    SecurityContextHolder.getContext().setAuthentication(auth);
+                    authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                    SecurityContextHolder.getContext().setAuthentication(authToken);
                 }
+
             } catch (Exception e) {
-                response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                // JWT invalid or expired → reject request
+                response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Invalid or expired JWT token");
+                return; // stop filter chain
+            }
+        } else {
+            // No token → reject if endpoint is protected
+            if (requiresAuthentication(request)) {
+                response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Missing Authorization header");
                 return;
             }
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    private boolean requiresAuthentication(HttpServletRequest request) {
+        String path = request.getRequestURI();
+        // Customize if needed; all /api/profile/**, /api/route/**, etc. require authentication
+        return path.startsWith("/api/profile") || path.startsWith("/api/route") || path.startsWith("/api/ml");
     }
 }

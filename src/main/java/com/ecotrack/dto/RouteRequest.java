@@ -1,9 +1,11 @@
 package com.ecotrack.dto;
 
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+
 public record RouteRequest(
-        double originLat,
-        double originLon,
-        double destLat,
-        double destLon,    // e.g., "12.9352,77.6146"
-        String userEmail
+        @Min(-90) @Max(90) double originLat,
+        @Min(-180) @Max(180) double originLon,
+        @Min(-90) @Max(90) double destLat,
+        @Min(-180) @Max(180) double destLon
 ) {}
