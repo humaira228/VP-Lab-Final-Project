@@ -10,6 +10,7 @@ const api = axios.create({
   timeout: 10000,
 });
 
+// ---------------- Interceptors ----------------
 // Request interceptor to add JWT token
 api.interceptors.request.use(
   (config) => {
@@ -33,6 +34,29 @@ const onRefreshed = (token) => {
   refreshSubscribers = [];
 };
 
+// 🔹 Explicit refresh function (also used by the interceptor)
+export const refreshToken = async () => {
+  try {
+    const storedRefreshToken = localStorage.getItem('refreshToken');
+    if (!storedRefreshToken) throw new Error('No refresh token available');
+
+    const refreshResponse = await axios.post(`${API_BASE_URL}/auth/refresh`, {
+      refreshToken: storedRefreshToken,
+    });
+
+    const { token: newToken, refreshToken: newRefreshToken } = refreshResponse.data;
+
+    localStorage.setItem('jwtToken', newToken);
+    localStorage.setItem('refreshToken', newRefreshToken);
+    api.defaults.headers.Authorization = `Bearer ${newToken}`;
+
+    return newToken;
+  } catch (error) {
+    logout();
+    throw error;
+  }
+};
+
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
@@ -53,22 +77,11 @@ api.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        const refreshToken = localStorage.getItem('refreshToken');
-        if (!refreshToken) throw new Error('No refresh token');
-
-        const refreshResponse = await api.post('/auth/refresh', { refreshToken });
-        const { token: newToken, refreshToken: newRefreshToken } = refreshResponse.data;
-
-        localStorage.setItem('jwtToken', newToken);
-        localStorage.setItem('refreshToken', newRefreshToken);
-        api.defaults.headers.Authorization = `Bearer ${newToken}`;
-
+        const newToken = await refreshToken(); // 🔹 uses the helper
         isRefreshing = false;
         onRefreshed(newToken);
-
         return api(originalRequest);
       } catch (refreshError) {
-        logout();
         return Promise.reject(refreshError);
       }
     }
@@ -96,7 +109,7 @@ export const logout = () => {
   localStorage.removeItem('jwtToken');
   localStorage.removeItem('refreshToken');
   localStorage.removeItem('userProfile');
-  window.location.href = '/login';
+ 
 };
 
 // ---------------- Profile ----------------
@@ -134,7 +147,6 @@ export const testPublic = async () => {
 
 // ---------------- Utils ----------------
 export const isAuthenticated = () => !!localStorage.getItem('jwtToken');
-
 export const getCurrentToken = () => localStorage.getItem('jwtToken');
 
 export default api;

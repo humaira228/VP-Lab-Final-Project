@@ -31,6 +31,16 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
 
+        String path = request.getServletPath();
+
+        // Skip JWT validation for public endpoints
+        if (path.startsWith("/api/auth") || path.startsWith("/api/hello")
+                || path.startsWith("/api/aqi") || path.startsWith("/api/health")
+                || path.startsWith("/api/test")) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         String authHeader = request.getHeader("Authorization");
 
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
@@ -49,7 +59,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                         .roles(user.getRole().name())
                         .build();
 
-                // Set authentication
+                // Set authentication if not already set
                 if (SecurityContextHolder.getContext().getAuthentication() == null) {
                     UsernamePasswordAuthenticationToken authToken =
                             new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
@@ -58,13 +68,12 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 }
 
             } catch (Exception e) {
-                // JWT invalid or expired → reject request
                 response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Invalid or expired JWT token");
-                return; // stop filter chain
+                return;
             }
         } else {
-            // No token → reject if endpoint is protected
-            if (requiresAuthentication(request)) {
+            // No token for protected endpoints → reject
+            if (requiresAuthentication(path)) {
                 response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Missing Authorization header");
                 return;
             }
@@ -73,9 +82,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
-    private boolean requiresAuthentication(HttpServletRequest request) {
-        String path = request.getRequestURI();
-        // Customize if needed; all /api/profile/**, /api/route/**, etc. require authentication
+    private boolean requiresAuthentication(String path) {
         return path.startsWith("/api/profile") || path.startsWith("/api/route") || path.startsWith("/api/ml");
     }
 }
