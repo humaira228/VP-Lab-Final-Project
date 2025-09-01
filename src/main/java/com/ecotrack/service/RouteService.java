@@ -23,6 +23,15 @@ public class RouteService {
     @Value("${ors.api.key}")
     private String orsApiKey;
 
+    @Value("${tomtom.api.key}")
+    private String tomtomApiKey;
+
+    @Value("${ml.service.url}")
+    private String mlServiceUrl;
+
+    @Value("${ml.service.timeout}")
+    private int mlServiceTimeout;
+
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
     private final HealthProfileRepository healthProfileRepo;
@@ -35,13 +44,13 @@ public class RouteService {
 
     public RouteService(RestTemplate restTemplate, ObjectMapper objectMapper,
                         HealthProfileRepository healthProfileRepo, UserRepository userRepository,
-                        AqiService aqiService,TrafficService trafficService) {
+                        AqiService aqiService, TrafficService trafficService) {
         this.restTemplate = restTemplate;
         this.objectMapper = objectMapper;
         this.healthProfileRepo = healthProfileRepo;
         this.userRepository = userRepository;
         this.aqiService = aqiService;
-        this.trafficService = trafficService; // assign
+        this.trafficService = trafficService;
     }
 
     public List<RouteOption> getRouteAlternatives(
@@ -61,63 +70,35 @@ public class RouteService {
 
             double totalDistance = calculateHaversineDistance(startLat, startLon, endLat, endLon);
             List<RouteOption> normalRoutes;
+
             if (totalDistance > MAX_ALTERNATIVE_DISTANCE) {
                 logger.info("Long distance detected ({}m), using segmented routing", totalDistance);
                 return getSegmentedRoutes(startLon, startLat, endLon, endLat, profile);
             } else {
-//                return getNormalRoutes(startLon, startLat, endLon, endLat, profile);
                 normalRoutes = getNormalRoutes(startLon, startLat, endLon, endLat, profile);
-                int size = normalRoutes.size();
-                System.out.println("Number of normal routes: " + size);
 
-                // Pick the route with the *highest healthScore*
-//                return normalRoutes.stream()
-//                        .max(Comparator.comparingDouble(RouteOption::healthScore))
-//                        .map(Collections::singletonList)
-//                        .orElseGet(() -> createFallbackRoutes(startLat, startLon, endLat, endLon, profile).subList(0, 1));
-
+                if (normalRoutes.isEmpty()) {
+                    return createFallbackRoutes(startLat, startLon, endLat, endLon, profile);
+                }
             }
-            // Pick 3 routes: best AQI, best Traffic, best Combined
+
+            // Get best routes by different criteria
             RouteOption bestAqiRoute = normalRoutes.stream()
                     .min(Comparator.comparingInt(RouteOption::aqi))
-                    .orElseThrow();
+                    .orElse(normalRoutes.get(0));
 
             RouteOption bestTrafficRoute = normalRoutes.stream()
                     .min(Comparator.comparingInt(RouteOption::traffic))
-                    .orElseThrow();
+                    .orElse(normalRoutes.get(0));
 
             RouteOption bestCombinedRoute = normalRoutes.stream()
                     .max(Comparator.comparingDouble(RouteOption::combinedScore))
-                    .orElseThrow();
+                    .orElse(normalRoutes.get(0));
 
-            // Assign fixed colors for display
-//            bestAqiRoute = new RouteOption(
-//                    bestAqiRoute.routeId(), bestAqiRoute.healthScore(),
-//                    bestAqiRoute.polyline(), "#4CAF50", // green for best AQI
-//                    bestAqiRoute.distance(), bestAqiRoute.duration(),
-//                    bestAqiRoute.aqi(), bestAqiRoute.traffic(),
-//                    bestAqiRoute.combinedScore()
-//            );
-//
-//            bestTrafficRoute = new RouteOption(
-//                    bestTrafficRoute.routeId(), bestTrafficRoute.healthScore(),
-//                    bestTrafficRoute.polyline(), "#2196F3", // blue for best traffic
-//                    bestTrafficRoute.distance(), bestTrafficRoute.duration(),
-//                    bestTrafficRoute.aqi(), bestTrafficRoute.traffic(),
-//                    bestTrafficRoute.combinedScore()
-//            );
-//
-//            bestCombinedRoute = new RouteOption(
-//                    bestCombinedRoute.routeId(), bestCombinedRoute.healthScore(),
-//                    bestCombinedRoute.polyline(), "#FFC107", // amber for best combined
-//                    bestCombinedRoute.distance(), bestCombinedRoute.duration(),
-//                    bestCombinedRoute.aqi(), bestCombinedRoute.traffic(),
-//                    bestCombinedRoute.combinedScore()
-//            );
+            // Apply colors and offsets
             RouteOption bestAqiColored = new RouteOption(
                     bestAqiRoute.routeId(), bestAqiRoute.healthScore(),
                     offsetPolyline(bestAqiRoute.polyline(), 0), "#4CAF50",
-                    // bestAqiRoute.polyline(), "#4CAF50", // green for AQI
                     bestAqiRoute.distance(), bestAqiRoute.duration(),
                     bestAqiRoute.aqi(), bestAqiRoute.traffic(),
                     bestAqiRoute.combinedScore()
@@ -126,7 +107,6 @@ public class RouteService {
             RouteOption bestTrafficColored = new RouteOption(
                     bestTrafficRoute.routeId(), bestTrafficRoute.healthScore(),
                     offsetPolyline(bestTrafficRoute.polyline(), 1), "#2196F3",
-                    //bestTrafficRoute.polyline(), "#2196F3", // blue for traffic
                     bestTrafficRoute.distance(), bestTrafficRoute.duration(),
                     bestTrafficRoute.aqi(), bestTrafficRoute.traffic(),
                     bestTrafficRoute.combinedScore()
@@ -135,28 +115,28 @@ public class RouteService {
             RouteOption bestCombinedColored = new RouteOption(
                     bestCombinedRoute.routeId(), bestCombinedRoute.healthScore(),
                     offsetPolyline(bestCombinedRoute.polyline(), 2), "#FFC107",
-                    // bestCombinedRoute.polyline(), "#FFC107", // amber for combined
                     bestCombinedRoute.distance(), bestCombinedRoute.duration(),
                     bestCombinedRoute.aqi(), bestCombinedRoute.traffic(),
                     bestCombinedRoute.combinedScore()
             );
+
             return List.of(bestAqiColored, bestTrafficColored, bestCombinedColored);
 
-            //return List.of(bestAqiRoute, bestTrafficRoute, bestCombinedRoute);
-
-        } catch (Exception e) {
-            logger.error("Failed to get route alternatives", e);
-            throw new RuntimeException("Route calculation failed: " + e.getMessage());
+        } catch (Exception ex) {
+            logger.error("Failed to get route alternatives", ex);
+            return createFallbackRoutes(startLat, startLon, endLat, endLon,
+                    healthProfileRepo.findByUser(userRepository.findByEmail(userEmail)
+                                    .orElseThrow(() -> new RuntimeException("User not found")))
+                            .orElseGet(HealthProfile::new));
         }
     }
+
     private String offsetPolyline(String polyline, int offsetIndex) {
         try {
             List<List<Double>> coords = objectMapper.readValue(polyline, List.class);
-            double delta = 0.00005 * offsetIndex; // small offset
+            double delta = 0.00005 * offsetIndex;
             for (List<Double> point : coords) {
                 point.set(0, point.get(0) + delta);
-//                point.set(0, point.get(0) + delta); // shift longitude
-//                point.set(1, point.get(1) + delta); // shift latitude
             }
             return objectMapper.writeValueAsString(coords);
         } catch (Exception e) {
@@ -175,10 +155,8 @@ public class RouteService {
                     Arrays.asList(startLon, startLat),
                     Arrays.asList(endLon, endLat)
             ));
-            requestBody.put("geometry_simplify", false); // prevent simplification
-            requestBody.put("instructions", true);       // optional, gives turn-by-turn instructions
-
-            // requestBody.put("instructions", false);
+            requestBody.put("geometry_simplify", false);
+            requestBody.put("instructions", true);
             requestBody.put("alternative_routes", Map.of(
                     "target_count", 3,
                     "share_factor", 1
@@ -188,7 +166,6 @@ public class RouteService {
 
             ResponseEntity<Map> response = restTemplate.exchange(
                     "https://api.openrouteservice.org/v2/directions/" + profileType + "/geojson",
-                    //"https://api.openrouteservice.org/v2/directions/driving-car" + "/geojson",
                     HttpMethod.POST,
                     new HttpEntity<>(requestBody, headers),
                     Map.class
@@ -202,7 +179,6 @@ public class RouteService {
 
         } catch (Exception e) {
             logger.error("ORS API call failed. Falling back to straight-line routes.", e);
-            logger.warn("Normal routing failed, using fallback: {}", e.getMessage());
             return createFallbackRoutes(startLat, startLon, endLat, endLon, profile);
         }
     }
@@ -219,8 +195,8 @@ public class RouteService {
                 double[] nextPoint = segments.get(i + 1);
 
                 List<RouteOption> segmentOptions = getNormalRoutes(
-                        currentPoint[1], currentPoint[0], // lon, lat
-                        nextPoint[1], nextPoint[0],       // lon, lat
+                        currentPoint[1], currentPoint[0],
+                        nextPoint[1], nextPoint[0],
                         profile
                 );
                 allSegmentOptions.addAll(segmentOptions);
@@ -262,34 +238,29 @@ public class RouteService {
         List<RouteOption> combinedRoutes = new ArrayList<>();
 
         combinedRoutes.add(createCombinedRoute(segmentOptions, "health-optimized", profile));
-
         combinedRoutes.add(createCombinedRoute(
                 segmentOptions.stream()
                         .sorted(Comparator.comparingDouble(RouteOption::distance))
                         .collect(Collectors.toList()),
-                "distance-optimized"
-                , profile
+                "distance-optimized", profile
         ));
-
         combinedRoutes.add(createCombinedRoute(
                 segmentOptions.stream()
                         .sorted((r1, r2) -> Integer.compare(r2.aqi(), r1.aqi()))
                         .collect(Collectors.toList()),
-                "aqi-optimized"
-                , profile
+                "aqi-optimized", profile
         ));
 
         return combinedRoutes;
     }
 
-    private RouteOption createCombinedRoute(List<RouteOption> segments, String routeType,HealthProfile profile) {
+    private RouteOption createCombinedRoute(List<RouteOption> segments, String routeType, HealthProfile profile) {
         double totalDistance = segments.stream().mapToDouble(RouteOption::distance).sum();
         double totalDuration = segments.stream().mapToDouble(RouteOption::duration).sum();
         int avgAqi = (int) segments.stream().mapToInt(RouteOption::aqi).average().orElse(50);
-
-        // double healthScore = calculateHealthScore(totalDistance, totalDuration, avgAqi, new HealthProfile());
-        double healthScore = calculateHealthScore(totalDistance, totalDuration, avgAqi, profile);
         int avgTraffic = (int) segments.stream().mapToInt(RouteOption::traffic).average().orElse(50);
+
+        double healthScore = calculateHealthScore(totalDistance, totalDuration, avgAqi, profile);
         double combinedScore = (healthScore * 0.7 + (100 - avgTraffic) * 0.3);
         combinedScore = Math.max(0, Math.min(100, combinedScore));
 
@@ -303,7 +274,6 @@ public class RouteService {
                 avgAqi,
                 avgTraffic,
                 combinedScore
-
         );
     }
 
@@ -358,12 +328,10 @@ public class RouteService {
                 double distance = ((Number) summary.get("distance")).doubleValue();
                 double duration = ((Number) summary.get("duration")).doubleValue();
                 int avgAqi = calculateRouteAQI(coordinates);
-
-//                if (shouldAvoidRoute(avgAqi, profile)) continue;
+                int avgTraffic = calculateRouteTraffic(coordinates);
 
                 String polyline = objectMapper.writeValueAsString(coordinates);
                 double healthScore = calculateHealthScore(distance, duration, avgAqi, profile);
-                int avgTraffic = calculateRouteTraffic(coordinates);
                 double combinedScore = (healthScore * 0.7 + (100 - avgTraffic) * 0.3);
                 combinedScore = Math.max(0, Math.min(100, combinedScore));
 
@@ -383,22 +351,12 @@ public class RouteService {
             logger.error("Error processing routes", e);
         }
         return options;
-//        return options.stream()
-//                .sorted((r1, r2) -> Double.compare(r2.healthScore(), r1.healthScore()))
-//                .limit(3)
-//                .collect(Collectors.toList());
     }
 
-    private int calculateRouteAQI(List<List<Double>> coordinates)
-    {
+    private int calculateRouteAQI(List<List<Double>> coordinates) {
         try {
             List<Integer> aqiReadings = new ArrayList<>();
-            for (int i = 0; i < coordinates.size(); i += 1000)
-            //int numSamples = Math.min(5, coordinates.size());
-            //for (int i = 0; i < numSamples; i++)
-            {
-//                int idx = i * coordinates.size() / numSamples;
-//                List<Double> coord = coordinates.get(idx);
+            for (int i = 0; i < coordinates.size(); i += 1000) {
                 List<Double> coord = coordinates.get(i);
                 double lat = coord.get(1);
                 double lon = coord.get(0);
@@ -411,11 +369,24 @@ public class RouteService {
             logger.warn("Error calculating route AQI, using fallback", e);
             return 50;
         }
-
     }
 
-    private boolean shouldAvoidRoute(int aqi, HealthProfile profile) {
-        return profile.getPreferredMaxAqi() != null && aqi > profile.getPreferredMaxAqi();
+    private int calculateRouteTraffic(List<List<Double>> coordinates) {
+        try {
+            List<Integer> trafficReadings = new ArrayList<>();
+            for (int i = 0; i < coordinates.size(); i += 500) {
+                List<Double> coord = coordinates.get(i);
+                double lat = coord.get(1);
+                double lon = coord.get(0);
+                int traffic = trafficService.getTraffic(lat, lon);
+                if (traffic > 0) trafficReadings.add(traffic);
+            }
+            if (trafficReadings.isEmpty()) return 50;
+            return (int) trafficReadings.stream().mapToInt(Integer::intValue).average().orElse(50);
+        } catch (Exception e) {
+            logger.warn("Error calculating route traffic, using fallback", e);
+            return 50;
+        }
     }
 
     private double calculateHealthScore(double distance, double duration, int aqi, HealthProfile profile) {
@@ -446,9 +417,10 @@ public class RouteService {
             double routeDuration = (distance / 1000) * (2 + (i * 0.5));
 
             double healthScore = calculateHealthScore(routeDistance, routeDuration, estimatedAqi, profile);
-            int estimatedTraffic = 50 + (i * 10); // fallback traffic
+            int estimatedTraffic = 50 + (i * 10);
             double combinedScore = (healthScore * 0.7 + (100 - estimatedTraffic) * 0.3);
             combinedScore = Math.max(0, Math.min(100, combinedScore));
+
             fallbackRoutes.add(new RouteOption(
                     "fallback-" + i,
                     healthScore,
@@ -483,34 +455,4 @@ public class RouteService {
         if (score >= 20) return "#FF9800";
         return "#F44336";
     }
-
-    private int calculateRouteTraffic(List<List<Double>> coordinates) {
-        try {
-            List<Integer> trafficReadings = new ArrayList<>();
-            int numSamples = Math.min(5, coordinates.size());
-            for (int i = 0; i < coordinates.size(); i += 500)
-            //for (int i = 0; i < numSamples; i++)
-            {
-//                int idx = i * coordinates.size() / numSamples;
-//                List<Double> coord = coordinates.get(idx);
-                List<Double> coord = coordinates.get(i);
-                double lat = coord.get(1);
-                double lon = coord.get(0);
-                //List<Double> snapped = trafficService.snapToRoad(lat, lon);
-
-                //int traffic = trafficService.getTraffic(snapped.get(0), snapped.get(1));
-
-                int traffic = trafficService.getTraffic(lat, lon);
-                logger.info("Fetching traffic for lat={}, lon={} → traffic={}", lat, lon, traffic);
-                //int traffic = trafficService.getTraffic(lon,lat);
-                if (traffic > 0) trafficReadings.add(traffic);
-            }
-            if (trafficReadings.isEmpty()) return 50;
-            return (int) trafficReadings.stream().mapToInt(Integer::intValue).average().orElse(50);
-        } catch (Exception e) {
-            logger.warn("Error calculating route traffic, using fallback", e);
-            return 50;
-        }
-    }
-
 }

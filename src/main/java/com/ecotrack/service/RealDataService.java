@@ -25,12 +25,6 @@ public class RealDataService {
     @Value("${aqicn.api.url}")
     private String aqicnApiUrl;
 
-    @Value("${ors.api.key}")
-    private String orsApiKey;
-
-    @Value("${ors.api.url}")
-    private String orsApiUrl;
-
     @Value("${tomtom.api.key}")
     private String tomtomApiKey;
 
@@ -117,50 +111,11 @@ public class RealDataService {
         }
     }
 
-    @Cacheable(value = "routeData", key = "{#startLat, #startLon, #endLat, #endLon, #profile}", unless = "#result == null")
-    public Map<String, Object> getRouteData(double startLat, double startLon,
-                                            double endLat, double endLon, String profile) {
-        try {
-            String url = orsApiUrl
-                    .replace("{profile}", profile)
-                    .replace("{key}", orsApiKey);
-
-            Map<String, Object> body = new HashMap<>();
-            body.put("coordinates", new double[][]{{startLon, startLat}, {endLon, endLat}});
-            body.put("preference", "recommended");
-            body.put("format", "json");
-
-            logger.info("Fetching route data from ORS for profile: {}", profile);
-            Map<String, Object> response = restTemplate.postForObject(url, body, Map.class);
-
-            if (response != null && response.containsKey("features")) {
-                Map<String, Object> feature = ((java.util.List<Map<String, Object>>) response.get("features")).get(0);
-                Map<String, Object> properties = (Map<String, Object>) feature.get("properties");
-                Map<String, Object> summary = (Map<String, Object>) properties.get("summary");
-
-                Map<String, Object> result = new HashMap<>();
-                result.put("distance", summary.get("distance"));
-                result.put("duration", summary.get("duration"));
-                result.put("ascent", summary.get("ascent"));
-                result.put("descent", summary.get("descent"));
-                result.put("source", "openrouteservice");
-                result.put("profile", profile);
-                result.put("timestamp", System.currentTimeMillis());
-
-                logger.info("Successfully fetched route data: {}", result);
-                return result;
-            }
-        } catch (Exception e) {
-            logger.error("Failed to fetch route data: {}", e.getMessage());
-        }
-        return getFallbackRouteData(startLat, startLon, endLat, endLon);
-    }
-
     private Map<String, Object> getFallbackAQI(double lat, double lon) {
         Map<String, Object> fallback = new HashMap<>();
 
         // Simplified urban detection
-        boolean isUrban = true; // Default to urban for fallback
+        boolean isUrban = true;
 
         int baseAqi = isUrban ? 65 : 45;
 
@@ -190,36 +145,5 @@ public class RealDataService {
         fallback.put("source", "fallback");
         fallback.put("timestamp", System.currentTimeMillis());
         return fallback;
-    }
-
-    private Map<String, Object> getFallbackRouteData(double startLat, double startLon,
-                                                     double endLat, double endLon) {
-        // Calculate simple haversine distance as fallback
-        double distance = calculateHaversineDistance(startLat, startLon, endLat, endLon);
-        double duration = distance / 50.0 * 3600; // Assume 50 km/h average speed
-
-        Map<String, Object> fallback = new HashMap<>();
-        fallback.put("distance", distance);
-        fallback.put("duration", duration);
-        fallback.put("ascent", 0.0);
-        fallback.put("descent", 0.0);
-        fallback.put("source", "fallback");
-        fallback.put("timestamp", System.currentTimeMillis());
-        return fallback;
-    }
-
-    private double calculateHaversineDistance(double lat1, double lon1, double lat2, double lon2) {
-        final int R = 6371; // Earth's radius in kilometers
-
-        double latDistance = Math.toRadians(lat2 - lat1);
-        double lonDistance = Math.toRadians(lon2 - lon1);
-
-        double a = Math.sin(latDistance / 2) * Math.sin(latDistance / 2)
-                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
-                * Math.sin(lonDistance / 2) * Math.sin(lonDistance / 2);
-
-        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-        return R * c * 1000; // Convert to meters
     }
 }

@@ -13,17 +13,6 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 
-# Load the ML model on startup
-@app.before_first_request
-def load_model():
-    try:
-        if not health_predictor.load_model():
-            logger.warning("No trained model found. Using rule-based fallback.")
-        else:
-            logger.info("ML model loaded successfully")
-    except Exception as e:
-        logger.error(f"Error loading model: {e}")
-
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
@@ -103,7 +92,13 @@ def advice():
 
 if __name__ == '__main__':
     # Load model before starting
-    load_model()
+    try:
+        if not health_predictor.load_model():
+            logger.warning("No trained model found. Using rule-based fallback.")
+        else:
+            logger.info("ML model loaded successfully")
+    except Exception as e:
+        logger.error(f"Error loading model: {e}")
 
     # Get port from environment or use default
     port = int(os.getenv('ML_SERVICE_PORT', 8000))

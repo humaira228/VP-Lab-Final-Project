@@ -1,5 +1,8 @@
 package com.ecotrack.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.client.HttpClientErrorException;
@@ -9,26 +12,20 @@ import java.util.Map;
 
 @Service
 public class TrafficService {
+    private static final Logger logger = LoggerFactory.getLogger(TrafficService.class);
 
     private final RestTemplate restTemplate = new RestTemplate();
 
-    // Your TomTom API key
-    private final String API_KEY = "PMZT3MWjkM4TqhgfDUbCnMtdlxOOfPdV";
+    @Value("${tomtom.api.key}")
+    private String apiKey;
 
-    // Snap-to-road API URL
     private final String SNAP_URL = "https://api.tomtom.com/map/1/match?key=%s";
-
-    // Traffic API URL
     private final String TRAFFIC_URL = "https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json?point=%f,%f&key=%s";
 
-    /**
-     * Snaps the given coordinates to the nearest road using TomTom's Snap-to-Road API.
-     * Returns a list [lat, lon].
-     */
     public List<Double> snapToRoad(double lat, double lon) {
         try {
             String body = String.format("{\"points\":[{\"latitude\":%f,\"longitude\":%f}]}", lat, lon);
-            Map response = restTemplate.postForObject(String.format(SNAP_URL, API_KEY), body, Map.class);
+            Map response = restTemplate.postForObject(String.format(SNAP_URL, apiKey), body, Map.class);
 
             List<Map<String, Object>> matchedPoints = (List<Map<String, Object>>) response.get("matchedPoints");
             if (matchedPoints != null && !matchedPoints.isEmpty()) {
@@ -37,27 +34,19 @@ public class TrafficService {
                 double snappedLon = ((Number) point.get("longitude")).doubleValue();
                 return List.of(snappedLat, snappedLon);
             }
-        } catch (HttpClientErrorException e) {
-            System.out.println("Snap-to-road API error: " + e.getMessage());
         } catch (Exception e) {
-            System.out.println("Unexpected error in snapToRoad: " + e.getMessage());
+            logger.warn("Snap-to-road failed for lat={}, lon={}: {}", lat, lon, e.getMessage());
         }
-        // fallback: return original coordinates
         return List.of(lat, lon);
     }
 
-    /**
-     * Get traffic severity (0–100) for given coordinates.
-     * 0 = free, 100 = heavy traffic
-     */
     public int getTraffic(double lat, double lon) {
         try {
-            // Snap to road first
             List<Double> snapped = snapToRoad(lat, lon);
             double snappedLat = snapped.get(0);
             double snappedLon = snapped.get(1);
 
-            String url = String.format(TRAFFIC_URL, snappedLat, snappedLon, API_KEY);
+            String url = String.format(TRAFFIC_URL, snappedLat, snappedLon, apiKey);
             Map response = restTemplate.getForObject(url, Map.class);
 
             if (response != null && response.containsKey("flowSegmentData")) {
@@ -65,15 +54,11 @@ public class TrafficService {
                 double currentSpeed = ((Number) flowData.get("currentSpeed")).doubleValue();
                 double freeFlowSpeed = ((Number) flowData.get("freeFlowSpeed")).doubleValue();
 
-                int severity = (int) Math.max(0, Math.min(100, 100 - (currentSpeed / freeFlowSpeed) * 100));
-                return severity;
+                return (int) Math.max(0, Math.min(100, 100 - (currentSpeed / freeFlowSpeed) * 100));
             }
-        } catch (HttpClientErrorException e) {
-            System.out.println("Traffic API error: " + e.getMessage());
         } catch (Exception e) {
-            System.out.println("Unexpected error in getTraffic: " + e.getMessage());
+            logger.warn("Traffic API failed for lat={}, lon={}: {}", lat, lon, e.getMessage());
         }
-        // fallback severity
         return 50;
     }
 }
