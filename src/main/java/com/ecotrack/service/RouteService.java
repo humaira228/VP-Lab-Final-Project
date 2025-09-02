@@ -12,6 +12,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.ResourceAccessException;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -73,7 +75,7 @@ public class RouteService {
 
             if (totalDistance > MAX_ALTERNATIVE_DISTANCE) {
                 logger.info("Long distance detected ({}m), using segmented routing", totalDistance);
-                return getSegmentedRoutes(startLon, startLat, endLon, endLat, profile);
+                normalRoutes = getSegmentedRoutes(startLon, startLat, endLon, endLat, profile);
             } else {
                 normalRoutes = getNormalRoutes(startLon, startLat, endLon, endLat, profile);
 
@@ -260,7 +262,10 @@ public class RouteService {
         int avgAqi = (int) segments.stream().mapToInt(RouteOption::aqi).average().orElse(50);
         int avgTraffic = (int) segments.stream().mapToInt(RouteOption::traffic).average().orElse(50);
 
-        double healthScore = calculateHealthScore(totalDistance, totalDuration, avgAqi, profile);
+        // Use ML service for health score calculation
+        double healthScore = calculateHealthScoreWithML(totalDistance, totalDuration, avgAqi, profile,
+                segments.get(0).polyline());
+
         double combinedScore = (healthScore * 0.7 + (100 - avgTraffic) * 0.3);
         combinedScore = Math.max(0, Math.min(100, combinedScore));
 
@@ -331,7 +336,10 @@ public class RouteService {
                 int avgTraffic = calculateRouteTraffic(coordinates);
 
                 String polyline = objectMapper.writeValueAsString(coordinates);
-                double healthScore = calculateHealthScore(distance, duration, avgAqi, profile);
+
+                // Use ML service for health score calculation
+                double healthScore = calculateHealthScoreWithML(distance, duration, avgAqi, profile, polyline);
+
                 double combinedScore = (healthScore * 0.7 + (100 - avgTraffic) * 0.3);
                 combinedScore = Math.max(0, Math.min(100, combinedScore));
 
@@ -387,6 +395,52 @@ public class RouteService {
             logger.warn("Error calculating route traffic, using fallback", e);
             return 50;
         }
+    }
+
+    private double calculateHealthScoreWithML(double distance, double duration, int aqi,
+                                              HealthProfile profile, String polyline) {
+        try {
+            // Prepare request for ML service
+            Map<String, Object> request = new HashMap<>();
+            request.put("route_distance", distance);
+            request.put("route_duration", duration);
+            request.put("aqi", aqi);
+            request.put("polyline", polyline);
+
+            // Add user profile information
+            if (profile != null) {
+                request.put("user_age", profile.getAge());
+                request.put("has_respiratory_issues", profile.getHasRespiratoryIssues());
+                request.put("has_cardio_issues", profile.getHasCardiovascularIssues());
+                request.put("is_pregnant", profile.getIsPregnant());
+                request.put("has_allergies", profile.getHasAllergies());
+                request.put("sensitivity_level", profile.getSensitivityLevel());
+                request.put("preferred_max_aqi", profile.getPreferredMaxAqi());
+                request.put("prefer_green_routes", profile.getPreferGreenRoutes());
+            }
+
+            // Call ML service
+            String url = mlServiceUrl + "/predict";
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(request, headers);
+
+            ResponseEntity<Map> response = restTemplate.exchange(
+                    url, HttpMethod.POST, entity, Map.class);
+
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                Map<String, Object> result = response.getBody();
+                if (result.containsKey("score")) {
+                    return ((Number) result.get("score")).doubleValue();
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("ML service call failed, using rule-based fallback: {}", e.getMessage());
+        }
+
+        // Fallback to rule-based calculation
+        return calculateHealthScore(distance, duration, aqi, profile);
     }
 
     private double calculateHealthScore(double distance, double duration, int aqi, HealthProfile profile) {

@@ -11,8 +11,5 @@ public class EcoTrackApplication {
         SpringApplication.run(EcoTrackApplication.class, args);
     }
 
-    @Bean
-    public RestTemplate restTemplate() {
-        return new RestTemplate();
-    }
+
 }

@@ -51,7 +51,7 @@ const MapPage = () => {
   const [destinationPlace, setDestinationPlace] = useState(null);
   const [manualClickMode, setManualClickMode] = useState(null);
   const [selectedRoute, setSelectedRoute] = useState(null);
-  const [travelMode, setTravelMode] = useState('driving'); // Default to driving
+  const [travelMode, setTravelMode] = useState('driving');
   const [estimatedTimes, setEstimatedTimes] = useState({});
 
   const handleMapClick = (latlng) => {
@@ -76,10 +76,10 @@ const MapPage = () => {
   const calculateEstimatedTimes = (distance) => {
     // Average speeds in km/h
     const speeds = {
-      driving: 40, // Account for traffic, lights, etc.
+      driving: 40,
       bicycling: 15,
       walking: 5,
-      transit: 25 // Bus/train with stops
+      transit: 25
     };
     
     const times = {};
@@ -116,49 +116,77 @@ const MapPage = () => {
         originLon: startPlace.lon,
         destLat: destinationPlace.lat,
         destLon: destinationPlace.lon,
-        travelMode: travelMode // Include selected travel mode
+        travelMode: travelMode
       };
 
+      console.log('Sending route request:', requestData);
+      
       const response = await getRecommendedRoutes(requestData);
+      console.log('Route response:', response);
 
       if (response.success === false) {
         throw new Error(response.message || 'Failed to get routes');
       }
 
-      setRoutes(response.routes || []);
+      // Handle different response formats
+      const routesData = response.routes || response.data || [];
+      setRoutes(routesData);
       
       // Calculate estimated times for all transportation modes
-      if (response.routes && response.routes.length > 0) {
-        const primaryRoute = response.routes[0];
-        const estimatedTimes = calculateEstimatedTimes(primaryRoute.distance);
+      if (routesData.length > 0) {
+        const primaryRoute = routesData[0];
+        const estimatedTimes = calculateEstimatedTimes(primaryRoute.distance || primaryRoute.distance_meters || 0);
         setEstimatedTimes(estimatedTimes);
       }
     } catch (err) {
-      console.error('Route fetch error:', err);
-      setError(err.response?.data?.message || 
-              err.message || 
-              'Failed to calculate routes. Please try again.');
+      console.error('Route fetch error details:', err);
+      let errorMessage = 'Failed to calculate routes. Please try again.';
+      
+      if (err.response) {
+        // Server responded with error status
+        errorMessage = err.response.data?.message || `Server error: ${err.response.status}`;
+      } else if (err.request) {
+        // Request was made but no response received
+        errorMessage = 'Network error. Please check your connection and try again.';
+      } else {
+        // Other errors
+        errorMessage = err.message || 'Failed to calculate routes. Please try again.';
+      }
+      
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
   };
 
   const parsePolyline = (polylineString) => {
+    if (!polylineString) return [];
+    
     try {
-      return JSON.parse(polylineString);
-    } catch (e) {
+      // Try to parse as JSON first
+      if (typeof polylineString === 'string' && polylineString.startsWith('[')) {
+        return JSON.parse(polylineString);
+      }
+      
+      // If it's not JSON, try to parse as semicolon-separated string
       if (typeof polylineString === 'string' && polylineString.includes(';')) {
         return polylineString.split(';').filter(coord => coord.trim() !== '').map(coord => {
           const [lat, lon] = coord.split(',').map(parseFloat);
           return [lon, lat];
         });
       }
+      
       console.error('Unable to parse polyline:', polylineString);
+      return [];
+    } catch (e) {
+      console.error('Polyline parsing error:', e);
       return [];
     }
   };
 
   const formatDuration = (seconds) => {
+    if (!seconds) return '0m';
+    
     const mins = Math.floor(seconds / 60);
     return mins > 60 
       ? `${Math.floor(mins / 60)}h ${mins % 60}m` 
@@ -174,7 +202,7 @@ const MapPage = () => {
     }
     if (startPlace) return [startPlace.lat, startPlace.lon];
     if (destinationPlace) return [destinationPlace.lat, destinationPlace.lon];
-    return [12.9716, 77.5946]; // Default to Bangalore
+    return [12.9716, 77.5946];
   };
 
   const getHealthScoreColor = (score) => {
@@ -404,40 +432,49 @@ const MapPage = () => {
               <div className="bg-white rounded-xl shadow-md p-6">
                 <h2 className="text-xl font-semibold text-gray-800 mb-4">Recommended Routes</h2>
                 <div className="space-y-4">
-                  {routes.map((route, index) => (
-                    <div 
-                      key={route.routeId || index} 
-                      className={`p-4 border rounded-lg cursor-pointer transition-all ${
-                        selectedRoute === index 
-                          ? 'border-blue-500 bg-blue-50 shadow-md' 
-                          : 'border-gray-200 hover:border-blue-300 hover:shadow-sm'
-                      }`}
-                      onClick={() => setSelectedRoute(index)}
-                    >
-                      <div className="flex justify-between items-start">
-                        <h3 className="font-bold text-lg text-gray-800">Option {index + 1}</h3>
-                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${getHealthScoreColor(route.healthScore)}`}>
-                          Health Score: {route.healthScore.toFixed(0)}
-                        </span>
-                      </div>
-                      <div className="mt-3 space-y-2 text-sm">
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Distance:</span>
-                          <span className="font-medium">{(route.distance / 1000).toFixed(2)} km</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Duration:</span>
-                          <span className="font-medium">{formatDuration(route.duration)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">AQI:</span>
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getAqiColor(route.aqi)}`}>
-                            {route.aqi}
+                  {routes.map((route, index) => {
+                    const distance = route.distance || route.distance_meters || 0;
+                    const duration = route.duration || route.duration_seconds || 0;
+                    const aqi = route.aqi || 50;
+                    const traffic = route.traffic || 50;
+                    const healthScore = route.healthScore || route.health_score || 50;
+                    const combinedScore = route.combinedScore || healthScore;
+                    
+                    return (
+                      <div 
+                        key={route.routeId || index} 
+                        className={`p-4 border rounded-lg cursor-pointer transition-all ${
+                          selectedRoute === index 
+                            ? 'border-blue-500 bg-blue-50 shadow-md' 
+                            : 'border-gray-200 hover:border-blue-300 hover:shadow-sm'
+                        }`}
+                        onClick={() => setSelectedRoute(index)}
+                      >
+                        <div className="flex justify-between items-start">
+                          <h3 className="font-bold text-lg text-gray-800">Option {index + 1}</h3>
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getHealthScoreColor(healthScore)}`}>
+                            Health Score: {healthScore.toFixed(0)}
                           </span>
                         </div>
+                        <div className="mt-3 space-y-2 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Distance:</span>
+                            <span className="font-medium">{(distance / 1000).toFixed(2)} km</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Duration:</span>
+                            <span className="font-medium">{formatDuration(duration)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">AQI:</span>
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getAqiColor(aqi)}`}>
+                              {aqi}
+                            </span>
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -496,9 +533,9 @@ const MapPage = () => {
                         <Popup>
                           <div className="font-medium">Option {index + 1}</div>
                           <div className="text-sm">
-                            <p>Health Score: {route.healthScore.toFixed(0)}</p>
-                            <p>Distance: {(route.distance / 1000).toFixed(2)} km</p>
-                            <p>AQI: {route.aqi}</p>
+                            <p>Health Score: {(route.healthScore || route.health_score || 0).toFixed(0)}</p>
+                            <p>Distance: {((route.distance || route.distance_meters || 0) / 1000).toFixed(2)} km</p>
+                            <p>AQI: {route.aqi || 50}</p>
                           </div>
                         </Popup>
                       </Polyline>
