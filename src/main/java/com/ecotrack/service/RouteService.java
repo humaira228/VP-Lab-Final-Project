@@ -12,9 +12,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.ResourceAccessException;
 
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -24,9 +25,6 @@ public class RouteService {
 
     @Value("${ors.api.key}")
     private String orsApiKey;
-
-    @Value("${tomtom.api.key}")
-    private String tomtomApiKey;
 
     @Value("${ml.service.url}")
     private String mlServiceUrl;
@@ -40,19 +38,22 @@ public class RouteService {
     private final UserRepository userRepository;
     private final AqiService aqiService;
     private final TrafficService trafficService;
+    private final MLIntegrationService mlIntegrationService;
 
     private static final double MAX_ALTERNATIVE_DISTANCE = 100000; // 100km
     private static final double SEGMENT_DISTANCE = 80000; // 80km segments
 
     public RouteService(RestTemplate restTemplate, ObjectMapper objectMapper,
                         HealthProfileRepository healthProfileRepo, UserRepository userRepository,
-                        AqiService aqiService, TrafficService trafficService) {
+                        AqiService aqiService, TrafficService trafficService,
+                        MLIntegrationService mlIntegrationService) {
         this.restTemplate = restTemplate;
         this.objectMapper = objectMapper;
         this.healthProfileRepo = healthProfileRepo;
         this.userRepository = userRepository;
         this.aqiService = aqiService;
         this.trafficService = trafficService;
+        this.mlIntegrationService = mlIntegrationService;
     }
 
     public List<RouteOption> getRouteAlternatives(
@@ -84,23 +85,56 @@ public class RouteService {
                 }
             }
 
-            // Get best routes by different criteria
-            RouteOption bestAqiRoute = normalRoutes.stream()
+            for (int i = 0; i < normalRoutes.size(); i++) {
+                RouteOption route = normalRoutes.get(i);
+                System.out.println("Route " + i + " average AQI: " + route.aqi());
+            }
+            for (int i = 0; i < normalRoutes.size(); i++) {
+                RouteOption route = normalRoutes.get(i);
+                System.out.println("Route " + i + " average traffic: " + route.traffic());
+            }
+
+            // Check if all AQIs are the same
+            boolean allAqiSame = normalRoutes.stream()
+                    .map(RouteOption::aqi)
+                    .distinct()
+                    .count() == 1;
+
+            RouteOption bestAqiRoute = allAqiSame && normalRoutes.size() >= 1
+                    ? normalRoutes.get(0)   // Route 1 (index 0)
+                    : normalRoutes.stream()
                     .min(Comparator.comparingInt(RouteOption::aqi))
                     .orElse(normalRoutes.get(0));
 
-            RouteOption bestTrafficRoute = normalRoutes.stream()
+            // Check if all traffic values are the same
+            boolean allTrafficSame = normalRoutes.stream()
+                    .map(RouteOption::traffic)
+                    .distinct()
+                    .count() == 1;
+
+            RouteOption bestTrafficRoute = allTrafficSame && normalRoutes.size() <= 2
+                    ? normalRoutes.get(1)   // Route 2 (index 1)
+                    : normalRoutes.stream()
                     .min(Comparator.comparingInt(RouteOption::traffic))
                     .orElse(normalRoutes.get(0));
 
-            RouteOption bestCombinedRoute = normalRoutes.stream()
+            // Check if combined scores are all same
+            boolean allCombinedSame = normalRoutes.stream()
+                    .map(RouteOption::combinedScore)
+                    .distinct()
+                    .count() == 1;
+
+            RouteOption bestCombinedRoute = allCombinedSame&&normalRoutes.size() <= 3
+                    ? normalRoutes.get(2)   // Route 3 (index 2)
+                    : normalRoutes.stream()
+                    .filter(route -> !route.equals(bestTrafficRoute))
                     .max(Comparator.comparingDouble(RouteOption::combinedScore))
                     .orElse(normalRoutes.get(0));
 
             // Apply colors and offsets
             RouteOption bestAqiColored = new RouteOption(
                     bestAqiRoute.routeId(), bestAqiRoute.healthScore(),
-                    offsetPolyline(bestAqiRoute.polyline(), 0), "#4CAF50",
+                    offsetPolyline(bestAqiRoute.polyline(), 0), "#4CAF50",//green color
                     bestAqiRoute.distance(), bestAqiRoute.duration(),
                     bestAqiRoute.aqi(), bestAqiRoute.traffic(),
                     bestAqiRoute.combinedScore()
@@ -108,7 +142,7 @@ public class RouteService {
 
             RouteOption bestTrafficColored = new RouteOption(
                     bestTrafficRoute.routeId(), bestTrafficRoute.healthScore(),
-                    offsetPolyline(bestTrafficRoute.polyline(), 1), "#2196F3",
+                    offsetPolyline(bestTrafficRoute.polyline(), 1), "#F44336", // Red color
                     bestTrafficRoute.distance(), bestTrafficRoute.duration(),
                     bestTrafficRoute.aqi(), bestTrafficRoute.traffic(),
                     bestTrafficRoute.combinedScore()
@@ -116,7 +150,7 @@ public class RouteService {
 
             RouteOption bestCombinedColored = new RouteOption(
                     bestCombinedRoute.routeId(), bestCombinedRoute.healthScore(),
-                    offsetPolyline(bestCombinedRoute.polyline(), 2), "#FFC107",
+                    offsetPolyline(bestCombinedRoute.polyline(), 2), "#FFC107", // Yellow color
                     bestCombinedRoute.distance(), bestCombinedRoute.duration(),
                     bestCombinedRoute.aqi(), bestCombinedRoute.traffic(),
                     bestCombinedRoute.combinedScore()
@@ -132,6 +166,7 @@ public class RouteService {
                             .orElseGet(HealthProfile::new));
         }
     }
+
 
     private String offsetPolyline(String polyline, int offsetIndex) {
         try {
@@ -161,7 +196,7 @@ public class RouteService {
             requestBody.put("instructions", true);
             requestBody.put("alternative_routes", Map.of(
                     "target_count", 3,
-                    "share_factor", 1
+                    "share_factor", 0.7
             ));
 
             HttpHeaders headers = createHeaders();
@@ -262,10 +297,8 @@ public class RouteService {
         int avgAqi = (int) segments.stream().mapToInt(RouteOption::aqi).average().orElse(50);
         int avgTraffic = (int) segments.stream().mapToInt(RouteOption::traffic).average().orElse(50);
 
-        // Use ML service for health score calculation
-        double healthScore = calculateHealthScoreWithML(totalDistance, totalDuration, avgAqi, profile,
-                segments.get(0).polyline());
-
+        // Use ML-based health score calculation
+        double healthScore = calculateMLHealthScore(totalDistance, totalDuration, avgAqi, avgTraffic, profile);
         double combinedScore = (healthScore * 0.7 + (100 - avgTraffic) * 0.3);
         combinedScore = Math.max(0, Math.min(100, combinedScore));
 
@@ -318,9 +351,7 @@ public class RouteService {
         List<RouteOption> options = new ArrayList<>();
         try {
             List<Map<String, Object>> features = (List<Map<String, Object>>) responseBody.get("features");
-            if (features == null || features.isEmpty()) {
-                return options;
-            }
+            if (features == null || features.isEmpty()) return options;
 
             for (int i = 0; i < features.size(); i++) {
                 Map<String, Object> feature = features.get(i);
@@ -332,14 +363,14 @@ public class RouteService {
 
                 double distance = ((Number) summary.get("distance")).doubleValue();
                 double duration = ((Number) summary.get("duration")).doubleValue();
+
                 int avgAqi = calculateRouteAQI(coordinates);
                 int avgTraffic = calculateRouteTraffic(coordinates);
 
                 String polyline = objectMapper.writeValueAsString(coordinates);
 
-                // Use ML service for health score calculation
-                double healthScore = calculateHealthScoreWithML(distance, duration, avgAqi, profile, polyline);
-
+                // Use ML-based health score calculation
+                double healthScore = calculateMLHealthScore(distance, duration, avgAqi, avgTraffic, profile);
                 double combinedScore = (healthScore * 0.7 + (100 - avgTraffic) * 0.3);
                 combinedScore = Math.max(0, Math.min(100, combinedScore));
 
@@ -364,7 +395,7 @@ public class RouteService {
     private int calculateRouteAQI(List<List<Double>> coordinates) {
         try {
             List<Integer> aqiReadings = new ArrayList<>();
-            for (int i = 0; i < coordinates.size(); i += 1000) {
+            for (int i = 0; i < coordinates.size(); i += 50) {
                 List<Double> coord = coordinates.get(i);
                 double lat = coord.get(1);
                 double lon = coord.get(0);
@@ -379,67 +410,54 @@ public class RouteService {
         }
     }
 
-    private int calculateRouteTraffic(List<List<Double>> coordinates) {
-        try {
-            List<Integer> trafficReadings = new ArrayList<>();
-            for (int i = 0; i < coordinates.size(); i += 500) {
-                List<Double> coord = coordinates.get(i);
-                double lat = coord.get(1);
-                double lon = coord.get(0);
-                int traffic = trafficService.getTraffic(lat, lon);
-                if (traffic > 0) trafficReadings.add(traffic);
-            }
-            if (trafficReadings.isEmpty()) return 50;
-            return (int) trafficReadings.stream().mapToInt(Integer::intValue).average().orElse(50);
-        } catch (Exception e) {
-            logger.warn("Error calculating route traffic, using fallback", e);
-            return 50;
-        }
+    private String getColor(double score) {
+        if (score >= 80) return "#4CAF50";
+        if (score >= 60) return "#8BC34A";
+        if (score >= 40) return "#FFC107";
+        if (score >= 20) return "#FF9800";
+        return "#F44336";
     }
 
-    private double calculateHealthScoreWithML(double distance, double duration, int aqi,
-                                              HealthProfile profile, String polyline) {
+    // ML-based health score calculation with proper ML service integration
+    private double calculateMLHealthScore(double distance, double duration, int aqi, int traffic, HealthProfile profile) {
         try {
-            // Prepare request for ML service
-            Map<String, Object> request = new HashMap<>();
-            request.put("route_distance", distance);
-            request.put("route_duration", duration);
-            request.put("aqi", aqi);
-            request.put("polyline", polyline);
+            // Prepare features for ML model
+            Map<String, Object> features = new HashMap<>();
 
-            // Add user profile information
-            if (profile != null) {
-                request.put("user_age", profile.getAge());
-                request.put("has_respiratory_issues", profile.getHasRespiratoryIssues());
-                request.put("has_cardio_issues", profile.getHasCardiovascularIssues());
-                request.put("is_pregnant", profile.getIsPregnant());
-                request.put("has_allergies", profile.getHasAllergies());
-                request.put("sensitivity_level", profile.getSensitivityLevel());
-                request.put("preferred_max_aqi", profile.getPreferredMaxAqi());
-                request.put("prefer_green_routes", profile.getPreferGreenRoutes());
-            }
+            // Route characteristics
+            features.put("route_distance", distance);
+            features.put("route_duration", duration);
+            features.put("aqi", aqi);
+            features.put("traffic_level", traffic / 100.0); // Convert to 0-1 scale
 
-            // Call ML service
-            String url = mlServiceUrl + "/predict";
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
+            // User profile
+            features.put("user_age", profile.getAge() != null ? profile.getAge() : 30);
+            features.put("has_respiratory_issues", profile.getHasRespiratoryIssues() != null ? profile.getHasRespiratoryIssues() : false);
+            features.put("has_cardio_issues", profile.getHasCardiovascularIssues() != null ? profile.getHasCardiovascularIssues() : false);
+            features.put("is_pregnant", profile.getIsPregnant() != null ? profile.getIsPregnant() : false);
+            features.put("has_allergies", profile.getHasAllergies() != null ? profile.getHasAllergies() : false);
+            features.put("sensitivity_level", profile.getSensitivityLevel() != null ? profile.getSensitivityLevel().getMultiplier() : 2);
+            features.put("preferred_max_aqi", profile.getPreferredMaxAqi() != null ? profile.getPreferredMaxAqi() : 100);
+            features.put("prefer_green_routes", profile.getPreferGreenRoutes() != null ? profile.getPreferGreenRoutes() : true);
 
-            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(request, headers);
+            // Time-based features
+            int hour = LocalTime.now().getHour();
+            DayOfWeek dayOfWeek = LocalDate.now().getDayOfWeek();
+            features.put("hour_of_day", hour);
+            features.put("is_weekend", dayOfWeek == DayOfWeek.SATURDAY || dayOfWeek == DayOfWeek.SUNDAY);
+            features.put("is_rush_hour", (hour >= 7 && hour <= 10) || (hour >= 16 && hour <= 19));
 
-            ResponseEntity<Map> response = restTemplate.exchange(
-                    url, HttpMethod.POST, entity, Map.class);
+            // Call ML service with timeout
+            Map<String, Object> mlResult = mlIntegrationService.getHealthPrediction(features);
 
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                Map<String, Object> result = response.getBody();
-                if (result.containsKey("score")) {
-                    return ((Number) result.get("score")).doubleValue();
-                }
+            if (mlResult != null && mlResult.containsKey("score")) {
+                return (Double) mlResult.get("score");
             }
         } catch (Exception e) {
-            logger.warn("ML service call failed, using rule-based fallback: {}", e.getMessage());
+            logger.warn("ML service call failed, using fallback calculation: {}", e.getMessage());
         }
 
-        // Fallback to rule-based calculation
+        // Fallback to rule-based calculation if ML service fails
         return calculateHealthScore(distance, duration, aqi, profile);
     }
 
@@ -448,13 +466,16 @@ public class RouteService {
         double durationScore = Math.max(0, 1 - (duration / 3600));
         double aqiScore = Math.max(0, 1 - (aqi / 300.0));
 
-        double sensitivityMultiplier = profile.getSensitivityLevel() != null
-                ? profile.getSensitivityLevel().getMultiplier() : 1.0;
+        // Handle null sensitivity level
+        double sensitivityMultiplier = 1.0;
+        if (profile.getSensitivityLevel() != null) {
+            sensitivityMultiplier = profile.getSensitivityLevel().getMultiplier();
+        }
 
         double baseScore = (distanceScore * 0.3 + durationScore * 0.3 + aqiScore * 0.4) * 100;
         double adjustedScore = baseScore * sensitivityMultiplier;
 
-        if (profile.getHasRespiratoryIssues()) adjustedScore *= 0.9;
+        if (Boolean.TRUE.equals(profile.getHasRespiratoryIssues())) adjustedScore *= 0.9;
         if (Boolean.TRUE.equals(profile.getPreferGreenRoutes()) && aqi < 50) adjustedScore *= 1.1;
 
         return Math.max(0, Math.min(100, adjustedScore));
@@ -465,13 +486,15 @@ public class RouteService {
         List<RouteOption> fallbackRoutes = new ArrayList<>();
         double distance = calculateHaversineDistance(startLat, startLon, endLat, endLon);
 
+        // Create three distinct fallback routes with different characteristics
         for (int i = 0; i < 3; i++) {
-            int estimatedAqi = 50 + (i * 25);
-            double routeDistance = distance * (1 + (i * 0.1));
-            double routeDuration = (distance / 1000) * (2 + (i * 0.5));
+            int estimatedAqi = 40 + (i * 30); // Vary AQI (40, 70, 100)
+            int estimatedTraffic = 30 + (i * 25); // Vary traffic (30, 55, 80)
+            double routeDistance = distance * (1 + (i * 0.15)); // Vary distance
+            double routeDuration = (distance / 1000) * (2 + (i * 0.6)); // Vary duration
 
-            double healthScore = calculateHealthScore(routeDistance, routeDuration, estimatedAqi, profile);
-            int estimatedTraffic = 50 + (i * 10);
+            // Use ML-based health score calculation
+            double healthScore = calculateMLHealthScore(routeDistance, routeDuration, estimatedAqi, estimatedTraffic, profile);
             double combinedScore = (healthScore * 0.7 + (100 - estimatedTraffic) * 0.3);
             combinedScore = Math.max(0, Math.min(100, combinedScore));
 
@@ -494,19 +517,63 @@ public class RouteService {
                                           double endLat, double endLon, int variant) {
         if (variant == 0) {
             return String.format("[[%.6f,%.6f],[%.6f,%.6f]]", startLon, startLat, endLon, endLat);
-        } else {
-            double midLat = (startLat + endLat) / 2 + variant * 0.01;
-            double midLon = (startLon + endLon) / 2 - variant * 0.01;
+        } else if (variant == 1) {
+            double midLat = (startLat + endLat) / 2 + 0.01;
+            double midLon = (startLon + endLon) / 2 - 0.01;
             return String.format("[[%.6f,%.6f],[%.6f,%.6f],[%.6f,%.6f]]",
                     startLon, startLat, midLon, midLat, endLon, endLat);
+        } else {
+            double midLat1 = (startLat + endLat) / 2 + 0.02;
+            double midLon1 = (startLon + endLon) / 2 - 0.02;
+            double midLat2 = (startLat + endLat) / 2 - 0.01;
+            double midLon2 = (startLon + endLon) / 2 + 0.01;
+            return String.format("[[%.6f,%.6f],[%.6f,%.6f],[%.6f,%.6f],[%.6f,%.6f]]",
+                    startLon, startLat, midLon1, midLat1, midLon2, midLat2, endLon, endLat);
         }
     }
 
-    private String getColor(double score) {
-        if (score >= 80) return "#4CAF50";
-        if (score >= 60) return "#8BC34A";
-        if (score >= 40) return "#FFC107";
-        if (score >= 20) return "#FF9800";
-        return "#F44336";
+    private int calculateRouteTraffic(List<List<Double>> coordinates) {
+        try {
+            if (coordinates.size() < 2) return 50; // Not enough points
+
+            int totalTraffic = 0;
+            int segmentCount = 0;
+
+            for (int i = 0; i < coordinates.size() - 1; i++) {
+                List<Double> start = coordinates.get(i);
+                List<Double> end = coordinates.get(i + 1);
+
+                double startLat = start.get(1);
+                double startLon = start.get(0);
+                double endLat = end.get(1);
+                double endLon = end.get(0);
+
+                // Determine road type for this segment (simulated)
+                String roadType = simulateRoadType(startLat, startLon, endLat, endLon);
+
+                // Get traffic for this segment using your partner's TrafficService
+                int traffic = trafficService.getTraffic(startLat, startLon, roadType);
+
+                totalTraffic += traffic;
+                segmentCount++;
+            }
+
+            return segmentCount > 0 ? totalTraffic / segmentCount : 50;
+
+        } catch (Exception e) {
+            logger.warn("Error calculating route traffic per segment, using fallback", e);
+            return 50;
+        }
+    }
+
+    // Simulate road type based on lat/lon or randomly for now
+    private String simulateRoadType(double startLat, double startLon, double endLat, double endLon) {
+        // Simple example: based on distance of segment
+        double distance = calculateHaversineDistance(startLat, startLon, endLat, endLon);
+
+        if (distance > 5000) return "highway";     // segments > 5km → highway
+        if (distance > 2000) return "primary";     // 2–5 km → primary
+        if (distance > 500) return "secondary";    // 0.5–2 km → secondary
+        return "residential";                      // short segments → residential
     }
 }

@@ -1,64 +1,56 @@
 package com.ecotrack.service;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
-import org.springframework.web.client.HttpClientErrorException;
 
-import java.util.List;
-import java.util.Map;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.util.Random;
 
 @Service
 public class TrafficService {
-    private static final Logger logger = LoggerFactory.getLogger(TrafficService.class);
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final Random random = new Random();
 
-    @Value("${tomtom.api.key}")
-    private String apiKey;
+    public int getTraffic(double lat, double lon, String roadType) {
+        int freeFlow = getFreeFlowSpeed(roadType);
+        int avgSpeed = getHistoricalSpeed(roadType);
 
-    private final String SNAP_URL = "https://api.tomtom.com/map/1/match?key=%s";
-    private final String TRAFFIC_URL = "https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json?point=%f,%f&key=%s";
+        // Calculate congestion %
+        double congestion = (1.0 - (double) avgSpeed / freeFlow) * 100.0;
 
-    public List<Double> snapToRoad(double lat, double lon) {
-        try {
-            String body = String.format("{\"points\":[{\"latitude\":%f,\"longitude\":%f}]}", lat, lon);
-            Map response = restTemplate.postForObject(String.format(SNAP_URL, apiKey), body, Map.class);
+        // Add slight randomness so results aren't identical
+        double locationFactor = ((lat * 1000) % 10 + (lon * 1000) % 10) / 2.0; // 0-10
+        int varied = (int) Math.max(0, Math.min(100, congestion + locationFactor + random.nextInt(15) - 7));
 
-            List<Map<String, Object>> matchedPoints = (List<Map<String, Object>>) response.get("matchedPoints");
-            if (matchedPoints != null && !matchedPoints.isEmpty()) {
-                Map<String, Object> point = matchedPoints.get(0);
-                double snappedLat = ((Number) point.get("latitude")).doubleValue();
-                double snappedLon = ((Number) point.get("longitude")).doubleValue();
-                return List.of(snappedLat, snappedLon);
-            }
-        } catch (Exception e) {
-            logger.warn("Snap-to-road failed for lat={}, lon={}: {}", lat, lon, e.getMessage());
-        }
-        return List.of(lat, lon);
+        return varied;
     }
 
-    public int getTraffic(double lat, double lon) {
-        try {
-            List<Double> snapped = snapToRoad(lat, lon);
-            double snappedLat = snapped.get(0);
-            double snappedLon = snapped.get(1);
+    private int getFreeFlowSpeed(String roadType) {
+        return switch (roadType.toLowerCase()) {
+            case "highway" -> 100;
+            case "primary" -> 60;
+            case "secondary" -> 40;
+            case "residential" -> 30;
+            default -> 50;
+        };
+    }
 
-            String url = String.format(TRAFFIC_URL, snappedLat, snappedLon, apiKey);
-            Map response = restTemplate.getForObject(url, Map.class);
+    private int getHistoricalSpeed(String roadType) {
+        int hour = LocalTime.now().getHour();
+        DayOfWeek day = LocalDate.now().getDayOfWeek();
+        boolean isWeekend = (day == DayOfWeek.SATURDAY || day == DayOfWeek.SUNDAY);
 
-            if (response != null && response.containsKey("flowSegmentData")) {
-                Map<String, Object> flowData = (Map<String, Object>) response.get("flowSegmentData");
-                double currentSpeed = ((Number) flowData.get("currentSpeed")).doubleValue();
-                double freeFlowSpeed = ((Number) flowData.get("freeFlowSpeed")).doubleValue();
+        // Rush hours apply only on weekdays
+        boolean morningPeak = !isWeekend && (hour >= 7 && hour <= 10);
+        boolean eveningPeak = !isWeekend && (hour >= 16 && hour <= 19);
 
-                return (int) Math.max(0, Math.min(100, 100 - (currentSpeed / freeFlowSpeed) * 100));
-            }
-        } catch (Exception e) {
-            logger.warn("Traffic API failed for lat={}, lon={}: {}", lat, lon, e.getMessage());
-        }
-        return 50;
+        return switch (roadType.toLowerCase()) {
+            case "highway" -> morningPeak ? 60 : eveningPeak ? 70 : 90;
+            case "primary" -> morningPeak ? 30 : eveningPeak ? 35 : 55;
+            case "secondary" -> morningPeak ? 25 : eveningPeak ? 25 : 35;
+            case "residential" -> morningPeak ? 15 : eveningPeak ? 20 : 25;
+            default -> 40;
+        };
     }
 }

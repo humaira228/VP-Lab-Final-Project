@@ -1,4 +1,4 @@
-// src/pages/MapPage.jsx
+
 import React, { useState } from 'react';
 import { MapContainer, TileLayer, Polyline, Popup, Marker, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
@@ -110,13 +110,15 @@ const MapPage = () => {
       setLoading(true);
       setError('');
       setSelectedRoute(null);
+      setRoutes([]); // Clear previous routes
 
       const requestData = {
         originLat: startPlace.lat,
         originLon: startPlace.lon,
         destLat: destinationPlace.lat,
         destLon: destinationPlace.lon,
-        travelMode: travelMode
+        travelMode: travelMode,
+        userEmail: "user@example.com" // You'll need to get this from your auth system
       };
 
       console.log('Sending route request:', requestData);
@@ -128,8 +130,14 @@ const MapPage = () => {
         throw new Error(response.message || 'Failed to get routes');
       }
 
-      // Handle different response formats
-      const routesData = response.routes || response.data || [];
+      // Handle different response formats but ensure we only take 3 routes
+      let routesData = response.routes || response.data || [];
+      
+      // Ensure we only have 3 routes maximum
+      if (routesData.length > 3) {
+        routesData = routesData.slice(0, 3);
+      }
+      
       setRoutes(routesData);
       
       // Calculate estimated times for all transportation modes
@@ -163,17 +171,14 @@ const MapPage = () => {
     if (!polylineString) return [];
     
     try {
-      // Try to parse as JSON first
-      if (typeof polylineString === 'string' && polylineString.startsWith('[')) {
+      // Try to parse as JSON first (this is what the backend now returns)
+      if (typeof polylineString === 'string') {
         return JSON.parse(polylineString);
       }
       
-      // If it's not JSON, try to parse as semicolon-separated string
-      if (typeof polylineString === 'string' && polylineString.includes(';')) {
-        return polylineString.split(';').filter(coord => coord.trim() !== '').map(coord => {
-          const [lat, lon] = coord.split(',').map(parseFloat);
-          return [lon, lat];
-        });
+      // If it's already an array, return it directly
+      if (Array.isArray(polylineString)) {
+        return polylineString;
       }
       
       console.error('Unable to parse polyline:', polylineString);
@@ -202,7 +207,7 @@ const MapPage = () => {
     }
     if (startPlace) return [startPlace.lat, startPlace.lon];
     if (destinationPlace) return [destinationPlace.lat, destinationPlace.lon];
-    return [12.9716, 77.5946];
+    return [12.9716, 77.5946]; // Default to Bangalore
   };
 
   const getHealthScoreColor = (score) => {
@@ -219,6 +224,15 @@ const MapPage = () => {
     return 'text-red-600 bg-red-100';
   };
 
+  const getRouteTypeLabel = (color, index) => {
+    switch(color) {
+      case '#4CAF50': return 'Best AQI';
+      case '#F44336': return 'Best Traffic'; // Now red
+      case '#FFC107': return 'Best Combined';
+      default: return `Option ${index + 1}`;
+    }
+  };
+
   const clearSelection = (type) => {
     if (type === 'start') {
       setStartPlace(null);
@@ -229,6 +243,9 @@ const MapPage = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 p-4">
+      {/* Font Awesome Icons */}
+      <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+      
       <div className="max-w-7xl mx-auto">
         <div className="mb-6">
           <h1 className="text-3xl font-bold text-gray-800">Route Planner</h1>
@@ -336,23 +353,50 @@ const MapPage = () => {
                     Transportation Mode
                   </label>
                   <div className="grid grid-cols-2 gap-2">
-                    {['driving', 'transit', 'walking', 'bicycling'].map((mode) => (
-                      <button
-                        key={mode}
-                        type="button"
-                        onClick={() => setTravelMode(mode)}
-                        className={`p-2 rounded-lg text-center text-sm font-medium ${
-                          travelMode === mode
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                        }`}
-                      >
-                        {mode === 'driving' && '🚗 Driving'}
-                        {mode === 'transit' && '🚌 Transit'}
-                        {mode === 'walking' && '🚶 Walking'}
-                        {mode === 'bicycling' && '🚴 Cycling'}
-                      </button>
-                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setTravelMode('driving')}
+                      className={`p-2 rounded-lg text-center text-sm font-medium ${
+                        travelMode === 'driving'
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      <i className="fas fa-car mr-1"></i> Driving
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTravelMode('transit')}
+                      className={`p-2 rounded-lg text-center text-sm font-medium ${
+                        travelMode === 'transit'
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      <i className="fas fa-bus mr-1"></i> Transit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTravelMode('walking')}
+                      className={`p-2 rounded-lg text-center text-sm font-medium ${
+                        travelMode === 'walking'
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      <i className="fas fa-walking mr-1"></i> Walking
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTravelMode('bicycling')}
+                      className={`p-2 rounded-lg text-center text-sm font-medium ${
+                        travelMode === 'bicycling'
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      <i className="fas fa-bicycle mr-1"></i> Cycling
+                    </button>
                   </div>
                 </div>
 
@@ -370,7 +414,9 @@ const MapPage = () => {
                       Calculating Routes...
                     </>
                   ) : (
-                    'Find Routes'
+                    <>
+                      <i className="fas fa-route mr-2"></i> Find Routes
+                    </>
                   )}
                 </button>
               </form>
@@ -389,7 +435,7 @@ const MapPage = () => {
                   <div className="grid grid-cols-2 gap-3">
                     <div className="bg-gray-50 p-3 rounded-lg">
                       <div className="flex items-center">
-                        <span className="text-2xl mr-2">🚗</span>
+                        <i className="fas fa-car text-blue-500 text-xl mr-3"></i>
                         <div>
                           <p className="text-sm font-medium">Driving</p>
                           <p className="text-lg font-semibold">{estimatedTimes.driving}</p>
@@ -398,7 +444,7 @@ const MapPage = () => {
                     </div>
                     <div className="bg-gray-50 p-3 rounded-lg">
                       <div className="flex items-center">
-                        <span className="text-2xl mr-2">🚌</span>
+                        <i className="fas fa-bus text-blue-500 text-xl mr-3"></i>
                         <div>
                           <p className="text-sm font-medium">Transit</p>
                           <p className="text-lg font-semibold">{estimatedTimes.transit}</p>
@@ -407,7 +453,7 @@ const MapPage = () => {
                     </div>
                     <div className="bg-gray-50 p-3 rounded-lg">
                       <div className="flex items-center">
-                        <span className="text-2xl mr-2">🚶</span>
+                        <i className="fas fa-walking text-blue-500 text-xl mr-3"></i>
                         <div>
                           <p className="text-sm font-medium">Walking</p>
                           <p className="text-lg font-semibold">{estimatedTimes.walking}</p>
@@ -416,7 +462,7 @@ const MapPage = () => {
                     </div>
                     <div className="bg-gray-50 p-3 rounded-lg">
                       <div className="flex items-center">
-                        <span className="text-2xl mr-2">🚴</span>
+                        <i className="fas fa-bicycle text-blue-500 text-xl mr-3"></i>
                         <div>
                           <p className="text-sm font-medium">Cycling</p>
                           <p className="text-lg font-semibold">{estimatedTimes.bicycling}</p>
@@ -432,13 +478,14 @@ const MapPage = () => {
               <div className="bg-white rounded-xl shadow-md p-6">
                 <h2 className="text-xl font-semibold text-gray-800 mb-4">Recommended Routes</h2>
                 <div className="space-y-4">
-                  {routes.map((route, index) => {
+                  {routes.slice(0, 3).map((route, index) => { // Ensure only 3 routes
                     const distance = route.distance || route.distance_meters || 0;
                     const duration = route.duration || route.duration_seconds || 0;
                     const aqi = route.aqi || 50;
                     const traffic = route.traffic || 50;
                     const healthScore = route.healthScore || route.health_score || 50;
                     const combinedScore = route.combinedScore || healthScore;
+                    const routeColor = route.color || "#9ca3af";
                     
                     return (
                       <div 
@@ -448,28 +495,48 @@ const MapPage = () => {
                             ? 'border-blue-500 bg-blue-50 shadow-md' 
                             : 'border-gray-200 hover:border-blue-300 hover:shadow-sm'
                         }`}
+                        style={{ borderLeft: `4px solid ${routeColor}` }}
                         onClick={() => setSelectedRoute(index)}
                       >
                         <div className="flex justify-between items-start">
-                          <h3 className="font-bold text-lg text-gray-800">Option {index + 1}</h3>
+                          <div>
+                            <h3 className="font-bold text-lg text-gray-800">
+                              <i className="fas fa-route mr-2 text-gray-500"></i>Option {index + 1}
+                            </h3>
+                            <span className="text-xs font-medium" style={{ color: routeColor }}>
+                              {getRouteTypeLabel(routeColor, index)}
+                            </span>
+                          </div>
                           <span className={`px-2 py-1 rounded-full text-xs font-medium ${getHealthScoreColor(healthScore)}`}>
-                            Health Score: {healthScore.toFixed(0)}
+                            <i className="fas fa-heart mr-1"></i> Health Score: {healthScore.toFixed(0)}
                           </span>
                         </div>
                         <div className="mt-3 space-y-2 text-sm">
                           <div className="flex justify-between">
-                            <span className="text-gray-600">Distance:</span>
+                            <span className="text-gray-600">
+                              <i className="fas fa-ruler-combined mr-2"></i>Distance:
+                            </span>
                             <span className="font-medium">{(distance / 1000).toFixed(2)} km</span>
                           </div>
                           <div className="flex justify-between">
-                            <span className="text-gray-600">Duration:</span>
+                            <span className="text-gray-600">
+                              <i className="fas fa-clock mr-2"></i>Duration:
+                            </span>
                             <span className="font-medium">{formatDuration(duration)}</span>
                           </div>
                           <div className="flex justify-between">
-                            <span className="text-gray-600">AQI:</span>
+                            <span className="text-gray-600">
+                              <i className="fas fa-wind mr-2"></i>AQI:
+                            </span>
                             <span className={`px-2 py-1 rounded-full text-xs font-medium ${getAqiColor(aqi)}`}>
                               {aqi}
                             </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">
+                              <i className="fas fa-traffic-light mr-2"></i>Traffic:
+                            </span>
+                            <span className="font-medium">{traffic}</span>
                           </div>
                         </div>
                       </div>
@@ -499,7 +566,9 @@ const MapPage = () => {
                   {startPlace && (
                     <Marker position={[startPlace.lat, startPlace.lon]} icon={startIcon}>
                       <Popup>
-                        <div className="font-medium">Start Location</div>
+                        <div className="font-medium">
+                          <i className="fas fa-play-circle text-green-500 mr-2"></i>Start Location
+                        </div>
                         <div className="text-sm text-gray-600">{startPlace.label}</div>
                       </Popup>
                     </Marker>
@@ -508,7 +577,9 @@ const MapPage = () => {
                   {destinationPlace && (
                     <Marker position={[destinationPlace.lat, destinationPlace.lon]} icon={destinationIcon}>
                       <Popup>
-                        <div className="font-medium">Destination</div>
+                        <div className="font-medium">
+                          <i className="fas fa-flag-checkered text-red-500 mr-2"></i>Destination
+                        </div>
                         <div className="text-sm text-gray-600">{destinationPlace.label}</div>
                       </Popup>
                     </Marker>
@@ -521,21 +592,26 @@ const MapPage = () => {
                     
                     const leafletCoords = coordinates.map(([lon, lat]) => [lat, lon]);
                     const isSelected = selectedRoute === index;
+                    const routeColor = route.color || "#9ca3af";
                     
                     return (
                       <Polyline
                         key={route.routeId || index}
                         positions={leafletCoords}
-                        color={isSelected ? '#3b82f6' : '#9ca3af'}
+                        color={routeColor}
                         weight={isSelected ? 6 : 4}
                         opacity={isSelected ? 0.9 : 0.6}
                       >
                         <Popup>
-                          <div className="font-medium">Option {index + 1}</div>
+                          <div className="font-medium">
+                            <i className="fas fa-route mr-2"></i>Option {index + 1}
+                          </div>
                           <div className="text-sm">
-                            <p>Health Score: {(route.healthScore || route.health_score || 0).toFixed(0)}</p>
-                            <p>Distance: {((route.distance || route.distance_meters || 0) / 1000).toFixed(2)} km</p>
-                            <p>AQI: {route.aqi || 50}</p>
+                            <p><i className="fas fa-tag mr-2"></i>Type: {getRouteTypeLabel(routeColor, index)}</p>
+                            <p><i className="fas fa-heart mr-2"></i>Health Score: {(route.healthScore || route.health_score || 0).toFixed(0)}</p>
+                            <p><i className="fas fa-ruler-combined mr-2"></i>Distance: {((route.distance || route.distance_meters || 0) / 1000).toFixed(2)} km</p>
+                            <p><i className="fas fa-wind mr-2"></i>AQI: {route.aqi || 50}</p>
+                            <p><i className="fas fa-traffic-light mr-2"></i>Traffic: {route.traffic || 50}</p>
                           </div>
                         </Popup>
                       </Polyline>
@@ -558,4 +634,4 @@ const MapPage = () => {
   );
 };
 
-export default MapPage;
+export default MapPage; 

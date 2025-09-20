@@ -1,17 +1,37 @@
 // src/components/Navbar.jsx
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { logout } from '../services/api';
 
 const Navbar = ({ isAuthenticated, userProfile, setIsAuthenticated, setUserProfile }) => {
   const [isOpen, setIsOpen] = useState(false);
   const navigate = useNavigate();
+  const menuRef = useRef(null);
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
 
   const handleLogout = () => {
     logout();
     setIsAuthenticated(false);
     setUserProfile(null);
     navigate('/login');
+    setIsOpen(false);
+  };
+
+  const closeMenu = () => {
+    setIsOpen(false);
   };
 
   return (
@@ -34,18 +54,18 @@ const Navbar = ({ isAuthenticated, userProfile, setIsAuthenticated, setUserProfi
           
           {/* Desktop Menu */}
           <div className="hidden md:flex items-center space-x-4">
-            <Link to="/" className="px-3 py-2 rounded-md hover:bg-green-700">Home</Link>
-            <Link to="/map" className="px-3 py-2 rounded-md hover:bg-green-700">Map</Link>
-            <Link to="/profile" className="px-3 py-2 rounded-md hover:bg-green-700">Profile</Link>
+            <Link to="/" className="px-3 py-2 rounded-md hover:bg-green-700 transition-colors duration-200">Home</Link>
+            <Link to="/map" className="px-3 py-2 rounded-md hover:bg-green-700 transition-colors duration-200">Map</Link>
+            <Link to="/profile" className="px-3 py-2 rounded-md hover:bg-green-700 transition-colors duration-200">Profile</Link>
             {isAuthenticated ? (
               <button 
                 onClick={handleLogout}
-                className="px-3 py-2 rounded-md bg-red-500 hover:bg-red-600"
+                className="px-3 py-2 rounded-md bg-red-500 hover:bg-red-600 transition-colors duration-200"
               >
                 Logout
               </button>
             ) : (
-              <Link to="/login" className="px-3 py-2 rounded-md bg-blue-500 hover:bg-blue-600">Login</Link>
+              <Link to="/login" className="px-3 py-2 rounded-md bg-blue-500 hover:bg-blue-600 transition-colors duration-200">Login</Link>
             )}
           </div>
           
@@ -53,7 +73,8 @@ const Navbar = ({ isAuthenticated, userProfile, setIsAuthenticated, setUserProfi
           <div className="md:hidden flex items-center">
             <button 
               onClick={() => setIsOpen(!isOpen)}
-              className="text-white focus:outline-none"
+              className="text-white focus:outline-none p-2"
+              aria-label="Toggle menu"
             >
               <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 {isOpen ? (
@@ -69,49 +90,46 @@ const Navbar = ({ isAuthenticated, userProfile, setIsAuthenticated, setUserProfi
       
       {/* Mobile Menu */}
       {isOpen && (
-        <div className="md:hidden">
-          <div className="px-2 pt-2 pb-3 space-y-1 sm:px-3">
+        <div ref={menuRef} className="md:hidden bg-green-600 absolute w-full z-50 shadow-lg">
+          <div className="px-2 pt-2 pb-3 space-y-1">
             {isAuthenticated && userProfile && (
-              <div className="px-3 py-2 text-green-200">
+              <div className="px-3 py-2 text-green-200 border-b border-green-500">
                 Welcome, {userProfile.firstName || userProfile.email}
               </div>
             )}
             <Link 
               to="/" 
-              className="block px-3 py-2 rounded-md hover:bg-green-700"
-              onClick={() => setIsOpen(false)}
+              className="block px-3 py-2 rounded-md hover:bg-green-700 transition-colors duration-200"
+              onClick={closeMenu}
             >
               Home
             </Link>
             <Link 
               to="/map" 
-              className="block px-3 py-2 rounded-md hover:bg-green-700"
-              onClick={() => setIsOpen(false)}
+              className="block px-3 py-2 rounded-md hover:bg-green-700 transition-colors duration-200"
+              onClick={closeMenu}
             >
               Map
             </Link>
             <Link 
               to="/profile" 
-              className="block px-3 py-2 rounded-md hover:bg-green-700"
-              onClick={() => setIsOpen(false)}
+              className="block px-3 py-2 rounded-md hover:bg-green-700 transition-colors duration-200"
+              onClick={closeMenu}
             >
               Profile
             </Link>
             {isAuthenticated ? (
               <button 
-                onClick={() => {
-                  handleLogout();
-                  setIsOpen(false);
-                }}
-                className="w-full text-left block px-3 py-2 rounded-md bg-red-500 hover:bg-red-600"
+                onClick={handleLogout}
+                className="w-full text-left block px-3 py-2 rounded-md bg-red-500 hover:bg-red-600 transition-colors duration-200"
               >
                 Logout
               </button>
             ) : (
               <Link 
                 to="/login" 
-                className="block px-3 py-2 rounded-md bg-blue-500 hover:bg-blue-600"
-                onClick={() => setIsOpen(false)}
+                className="block px-3 py-2 rounded-md bg-blue-500 hover:bg-blue-600 transition-colors duration-200"
+                onClick={closeMenu}
               >
                 Login
               </Link>
