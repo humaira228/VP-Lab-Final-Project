@@ -22,19 +22,6 @@ Built for **Therap JavaFest**.
 
 ---
 
-## 🏗️ System Architecture
-graph TB
-    A[React Frontend] --> B[Spring Boot Backend]
-    B --> C[PostgreSQL DB]
-    B --> D[Python ML Service]
-    B --> E[WAQI API]
-    B --> F[OpenRouteService API]
-    D --> G[Trained ML Model]
-
-    style A fill:#61dafb
-    style B fill:#6db33f
-    style D fill:#3776ab
-
 
 ### 🛠️ Technology Stack
 
